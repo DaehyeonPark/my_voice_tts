@@ -1,0 +1,198 @@
+Windows RTX 3070 로컬 음성 TTS 파인튜닝 작업 인계서
+=======================================================
+
+역할
+----
+당신은 Windows RTX 3070 PC에서 실행되는 로컬 한국어 개인 음성 TTS
+파인튜닝 작업을 맡는다.
+
+개인정보·안전 규칙
+------------------
+- 음성 녹음, WAV, JSONL, 체크포인트, 생성 결과를 외부 서비스나
+  클라우드 저장소에 업로드하지 않는다.
+- 로컬 Windows/WSL2 파일 시스템에서만 처리한다.
+- 음성·모델·학습 산출물을 Git에 커밋하지 않는다.
+- active 모델을 교체하거나 삭제하기 전 대상과 백업을 확인한다.
+- CUDA/VRAM/FlashAttention 오류가 나면 CPU 학습으로 임의 전환하지 말고
+  오류 전문과 진단 결과를 보고한다.
+
+프로젝트와 학습 조건
+--------------------
+- WSL 프로젝트 경로 권장: ~/src/my_voice_tts
+- 새 녹음: training_data/new-recording.m4a
+- 원본 대본: recording_script_10min_ko.txt
+- 제외 구간: 289.0초 이상 311.0초 이하의 골프 발화 및 경계 겹침 구간
+- GPU: NVIDIA RTX 3070, VRAM 8GB
+- 모델: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+- 설정: batch 1, gradient accumulation 8, epoch 3, LR 2e-5
+- speaker: dyson, language: Korean
+
+먼저 읽을 문서
+----------------
+1. training_windows/README.md
+2. docs/superpowers/specs/2026-09-30-windows-qwen-finetune-design.md
+3. docs/superpowers/plans/2026-09-30-windows-qwen-finetune.md
+
+0. 시작 전 점검
+---------------
+프로젝트 루트에서 실행한다.
+
+  git log --oneline -12
+  git status --short
+  python -m pytest -q
+
+테스트가 통과하지 않거나 최신 코드가 아니라면 학습하지 말고 원인을 보고한다.
+
+실제 학습 전에 다음 항목을 코드와 테스트로 확인한다.
+
+- 손상/호환 불가 active 모델을 로드하지 못하면 앱이 Qwen zero-shot으로
+  안전하게 폴백하는가
+- 녹음 클립과 expected_text가 정확히 대응하지 않는 후보가 자동 승인/승격되지 않는가
+- 289~311초와 겹치는 후보가 train/validation JSONL에 절대 포함되지 않는가
+- evaluation report의 model SHA-256과 활성화 대상 checkpoint가 일치하는가
+- active 교체 시 기존 모델을 보존하는가
+- 녹음·WAV·모델·학습 결과가 Git ignore 상태인가
+
+문제가 있으면 테스트를 먼저 작성하고 수정한다. 사용자의 음성 데이터로 학습하기
+전에 전체 테스트를 통과시켜야 한다.
+
+1. WSL2·GPU 환경 준비
+----------------------
+관리자 PowerShell에서 WSL2가 없다면 `wsl --install` 후 재부팅한다.
+Ubuntu에서 다음을 실행한다.
+
+  sudo apt update
+  sudo apt install -y git ffmpeg python3 python3-venv python3-pip build-essential
+  nvidia-smi
+
+`nvidia-smi`에 RTX 3070이 나와야 한다.
+
+2. Python·CUDA 의존성 설치
+---------------------------
+
+  cd ~/src/my_voice_tts
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install --upgrade pip
+
+PyTorch 공식 설치 페이지에서 Linux / Pip / CUDA 12.6에 맞는 명령을 선택해
+설치한다. 예시는 다음과 같다.
+
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+확인:
+
+  python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+
+그 다음 프로젝트 의존성과 Qwen 학습 코드를 설치한다.
+
+  pip install -e '.[dev]'
+  pip install -r training_windows/requirements.txt
+  git clone https://github.com/QwenLM/Qwen3-TTS.git ~/src/Qwen3-TTS
+  pip install qwen-tts accelerate safetensors tensorboard flash-attn --no-build-isolation
+  python -c "import flash_attn, qwen_tts; print('설치 완료')"
+
+3. 데이터 준비
+---------------
+새 녹음 파일과 원본 대본은 Windows에서 WSL 프로젝트로 직접 복사한다.
+
+  cd ~/src/my_voice_tts
+  mkdir -p training_data
+  # 새 녹음 파일을 training_data/new-recording.m4a로 둔다.
+  source .venv/bin/activate
+  python -m training_windows.prepare_dataset \
+    --audio training_data/new-recording.m4a \
+    --script recording_script_10min_ko.txt \
+    --output-dir training_data
+
+생성될 파일:
+
+  training_data/review_manifest.jsonl
+  training_data/clips/
+  training_data/processed/recording_24khz_mono.wav
+
+4. 검토 매니페스트: 여기서 멈춰 사용자 승인을 받는다
+------------------------------------------------------
+review_manifest.jsonl을 열어 확인한다.
+
+- 289~311초 및 경계에 걸친 항목은 approved:false 유지
+- expected_text와 실제 녹음이 정확히 같은, 깨끗한 단일 발화만 approved:true
+- 실제로 대본을 읽었지만 ASR이 틀렸다면 expected_text를 정확한 문장으로
+  교정한 뒤 승인할 수 있다.
+- 문장이 섞였거나, 대본 밖 발화이거나, 잡음/침묵이 심하면 승인하지 않는다.
+
+사용자에게 다음만 보고하고 승인을 기다린다.
+
+- 전체 후보 수
+- 승인 후보 수
+- 골프 구간 제외 수
+- 낮은 유사도/수동 검토 필요 수
+- 승인할 후보의 대략적 총 길이
+
+사용자 승인 전에는 train.jsonl을 만들거나 학습을 실행하지 않는다.
+
+5. 승인 후 JSONL 생성
+----------------------
+골프 구간 밖의 깨끗한 10~20초를 reference.wav로 만든다. 예시:
+
+  ffmpeg -y -ss 30 -t 15 \
+    -i training_data/processed/recording_24khz_mono.wav \
+    -ar 24000 -ac 1 -sample_fmt s16 training_data/reference.wav
+
+승인된 항목만 JSONL로 승격한다.
+
+  python -m training_windows.review_manifest \
+    --manifest training_data/review_manifest.jsonl \
+    --reference-audio training_data/reference.wav \
+    --output-dir training_data
+
+train.jsonl/validation.jsonl의 개수와 제외 구간 부재를 확인한다.
+
+6. 학습
+--------
+
+  export QWEN_FINETUNING_DIR="$HOME/src/Qwen3-TTS/finetuning"
+  bash training_windows/train.sh
+
+성공하면 다음을 보고한다.
+
+- training_windows/output/run-<timestamp>/training_report.json
+- checkpoint-epoch-2 경로
+
+실패/OOM이면 training_report.json과 오류 전문을 보고하고 active 모델은 변경하지 않는다.
+
+7. 평가 및 사용자 청취 승인
+---------------------------
+
+  RUN_DIR="training_windows/output/run-실제_폴더명"
+  CHECKPOINT="$RUN_DIR/model/checkpoint-epoch-2"
+  python -m training_windows.evaluate \
+    --checkpoint "$CHECKPOINT" \
+    --output-dir "$RUN_DIR/evaluation"
+
+생성된 holdout-01.wav부터 holdout-05.wav까지의 경로를 사용자에게 알린다.
+사용자가 문장 일치와 음색 유사도를 직접 승인한 경우에만 다음을 실행한다.
+
+  python -m training_windows.evaluate \
+    --checkpoint "$CHECKPOINT" \
+    --output-dir "$RUN_DIR/evaluation" \
+    --listening-approved
+
+  python -m training_windows.activate_model \
+    --checkpoint "$CHECKPOINT" \
+    --evaluation-report "$RUN_DIR/evaluation/comparison_report.json" \
+    --active-dir data/models/fine_tuned/dyson/active
+
+8. Mac 배포 안내
+----------------
+활성화 성공 시 다음 폴더 전체를 USB, 외장 SSD 또는 로컬 네트워크 공유로 Mac에 복사한다.
+
+  data/models/fine_tuned/dyson/active/
+
+Mac 대상 경로:
+
+  /Users/dyson/VSCode_src/my_voice_tts/data/models/fine_tuned/dyson/active/
+
+Mac 서버를 재시작하고 /api/model이 fine_tuned인지 확인하도록 안내한다.
+
+매 단계마다 실행 명령, 결과, 다음 단계 진행 가능 여부를 짧게 보고한다.

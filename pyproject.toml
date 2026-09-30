@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-voice-tts"
+version = "0.1.0"
+description = "Loopback-only personal voice TTS"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "qwen-tts>=0.1.1,<0.2",
+]
+
+[project.scripts]
+voice-tts = "voice_tts.app:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]

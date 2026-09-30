@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>내 목소리 TTS</title><link rel="stylesheet" href="/static/styles.css"></head>
+<body><main><h1>내 목소리 TTS</h1><p class="privacy">127.0.0.1에서만 실행됩니다. 첫 모델 다운로드 후 음성과 텍스트는 내 컴퓨터에서만 처리됩니다.</p><p id="model-status" role="status">음성 모델을 확인하고 있습니다…</p>
+<section><h2>참조 음성</h2><label>녹음 파일 <select id="source"></select></label><div class="row"><label>시작(초)<input id="start" type="number" min="0" value="0"></label><label>길이(초)<input id="duration" type="number" min="10" max="20" value="15"></label></div><label>이 구간의 정확한 대본<textarea id="transcript" placeholder="녹음에서 실제로 말한 문장을 입력하세요."></textarea></label><button id="prepare">참조 음성 준비</button></section>
+<section><h2>음성 생성</h2><label>읽을 텍스트<textarea id="text" placeholder="여기에 한국어 문장을 입력하세요."></textarea></label><button id="generate">생성</button><p id="status" role="status"></p><audio id="audio" controls hidden></audio><a id="download" hidden download="my-voice.wav">WAV 다운로드</a></section></main><script src="/static/app.js"></script></body></html>
