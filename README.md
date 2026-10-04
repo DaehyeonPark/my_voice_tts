@@ -4,6 +4,18 @@
 
 ## 실행
 
+**Windows에서 학습한 목소리를 MacBook Pro M4·16GB에서 사용하려면
+[Mac 설치·모델 가져오기·실행 안내](mac/README.md)를 먼저 따르세요.**
+
+```bash
+bash mac/setup.sh
+.venv/bin/python mac/import_voice.py ~/Downloads/my-voice-mac.tar
+bash mac/run.sh
+```
+
+개인 모델은 Git에 포함되지 않으며 `my-voice-mac.tar`를 한 번 로컬 복사해야 합니다.
+아래는 학습 모델 없이 기본 음성 복제를 처음 준비하는 절차입니다.
+
 1. macOS에서 FFmpeg를 설치합니다: `brew install ffmpeg`
 2. 프로젝트 폴더에서 가상환경과 의존성을 준비합니다.
 
